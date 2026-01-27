@@ -24,11 +24,9 @@ Note: Directory names are defined in create_c2np.config (QUATERNIONS_SUBDIR, UNI
 
 import argparse
 import os
-import re
 import shutil
 import tempfile
 import zipfile
-from glob import glob
 from pathlib import Path
 
 from create_c2np.generate_quaternions import QuaternionGenerator
