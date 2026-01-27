@@ -48,7 +48,7 @@ class MatterGen_Task2(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
-            nn.Linear(hidden_dim, 6),  # 6 lattice parameters
+            nn.Linear(hidden_dim, 6),
         )
 
         # Space group classifier

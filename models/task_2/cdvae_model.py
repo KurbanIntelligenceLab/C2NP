@@ -30,7 +30,7 @@ class CDVAE_Task2(nn.Module):
         self.fc_logvar = nn.Linear(1, latent_dim, bias=True)
         nn.init.zeros_(self.fc_mu.weight)
         nn.init.zeros_(self.fc_logvar.weight)
-        self.fc_logvar.bias.data.fill_(-2.0)  # gentler than –4
+        self.fc_logvar.bias.data.fill_(-2.0)
 
         # ── Heads ──
         self.lat_head = nn.Linear(latent_dim, 6, bias=True)

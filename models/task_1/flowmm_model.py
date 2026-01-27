@@ -10,7 +10,6 @@ from torch_geometric.nn.models import GCN, SchNet
 class FlowMMUnitCell(nn.Module):
     """
     Flow Matching model for unit cell to nanoparticle generation.
-    Debug-enabled version with detailed print statements.
     """
 
     def __init__(

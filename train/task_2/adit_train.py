@@ -19,6 +19,7 @@ from torch_geometric.data.storage import GlobalStorage
 
 from dataloaders import C2NPDataloader
 from models.task_2.adit_model import ADiT_Task2
+from train.task_2.config import Task2TrainingConfig
 
 # Allowlist PyG globals
 torch.serialization.add_safe_globals([GlobalStorage, DataEdgeAttr, DataTensorAttr])
@@ -47,7 +48,7 @@ def strip_global(data):
 
 
 # Single-epoch runner
-def run_epoch(model, loader, optimizer=None, train=False, device="cpu"):
+def run_epoch(model, loader, optimizer=None, train=False, device="cpu", cls_w=0.5, grad_clip=1.0):
     if train:
         model.train()
     else:
@@ -74,21 +75,18 @@ def run_epoch(model, loader, optimizer=None, train=False, device="cpu"):
             alpha = 1 - model.get_noise_schedule(t)
             alpha = alpha.view(-1, 1)
 
-            # Create noisy lattice parameters
-            noisy_lat = torch.sqrt(alpha) * l_true + torch.sqrt(1 - alpha) * noise
-
             # Predict noise and space group
             noise_pred, sg_logits = model(batch, t)
 
             # Compute losses
             loss_r = reg_loss(noise_pred, noise)
             loss_c = cls_loss(sg_logits, sg_true)
-            loss = loss_r + CLS_W * loss_c
+            loss = loss_r + cls_w * loss_c
 
             if train:
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
 
         tot += loss.item() * B
@@ -175,15 +173,13 @@ def evaluate_model(model, loader, device):
         return 0.0, 0.0, 0.0  # Return default values for failed computations
 
 
-# Hyperparams
-DATA_ROOT = "C2NP"
-BATCH_SIZE = 1
-LR = 1e-4
-NUM_EPOCHS = 5
-CLS_W = 0.5
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Load configuration
+config = Task2TrainingConfig.default()
+SEEDS = config.get_seeds_for_model("adit")
+BATCH_SIZE = config.get_batch_size_for_model("adit")
+GRAD_CLIP = config.get_grad_clip_for_model("adit")
 
-for SEED in [50, 60]:
+for SEED in SEEDS:
     random.seed(SEED)
     torch.manual_seed(SEED)
     torch.cuda.manual_seed_all(SEED)
@@ -192,8 +188,15 @@ for SEED in [50, 60]:
     torch.backends.cudnn.benchmark = False
 
     # Output directory
-    out_dir = os.path.join("results", "task_2", "adit", str(SEED))
+    out_dir = config.get_output_dir("adit", SEED)
     os.makedirs(out_dir, exist_ok=True)
+
+    # Hyperparams from config
+    DATA_ROOT = config.data_root
+    LR = config.learning_rate
+    NUM_EPOCHS = config.num_epochs
+    CLS_W = config.cls_weight
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset with strip_global transform
     ds = C2NPDataloader(root=DATA_ROOT, transform=strip_global)
@@ -201,18 +204,19 @@ for SEED in [50, 60]:
     otrain_full = ds.get_split("train")
     NUM_SG = int(otrain_full.data.spacegroup.max()) + 1
 
-    # Use only 20% of each split to prevent crashes
-    SUBSET_RATIO = 1
+    # Dataset splits from config
+    SUBSET_RATIO = config.subset_ratio
+    train_ratio, val_ratio = config.train_val_split
 
     # Random in-dist splits and OOD
     train_ds, val_ds = ds.random_train_splits(
-        0.8, 0.2, seed=SEED, subset_ratio=SUBSET_RATIO
+        train_ratio, val_ratio, seed=SEED, subset_ratio=SUBSET_RATIO
     )
     id_test_ds = ds.get_split("id_test", subset_ratio=SUBSET_RATIO)
     ood_ds = ds.get_split("ood_test", subset_ratio=SUBSET_RATIO)
 
     # Print dataset sizes to confirm subset is working
-    print(f"Dataset sizes (using {SUBSET_RATIO*100}% subset):")
+    print(f"Dataset sizes (using {SUBSET_RATIO * 100}% subset):")
     print(f"Train: {len(train_ds)}")
     print(f"Val: {len(val_ds)}")
     print(f"ID Test: {len(id_test_ds)}")
@@ -228,19 +232,22 @@ for SEED in [50, 60]:
     id_loader = DataLoader(id_test_ds, batch_size=BATCH_SIZE, shuffle=False)
     ood_loader = DataLoader(ood_ds, batch_size=BATCH_SIZE, shuffle=False)
 
-    # Model, optimizer, scheduler
+    # Model, optimizer, scheduler from config
     model = ADiT_Task2(
-        hidden_dim=4,
-        num_layers=1,
-        cutoff=5.0,
+        hidden_dim=config.hidden_dim,
+        num_layers=config.num_layers,
+        cutoff=config.cutoff_radius,
         num_spacegroups=NUM_SG,
-        num_heads=2,
-        dropout=0.1,
-        chunk_size=128,
+        num_heads=config.adit_num_heads,
+        dropout=config.adit_dropout,
+        chunk_size=config.adit_chunk_size,
     ).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5
+        optimizer,
+        mode=config.scheduler_mode,
+        factor=config.scheduler_factor,
+        patience=config.scheduler_patience,
     )
 
     # Training loop
@@ -249,8 +256,8 @@ for SEED in [50, 60]:
     for epoch in range(1, NUM_EPOCHS + 1):
         print(f"-- Epoch {epoch}/{NUM_EPOCHS}")
         start_time = time.time()
-        tl = run_epoch(model, train_loader, optimizer, True, DEVICE)
-        vl = run_epoch(model, val_loader, None, False, DEVICE)
+        tl = run_epoch(model, train_loader, optimizer, True, DEVICE, CLS_W, GRAD_CLIP)
+        vl = run_epoch(model, val_loader, None, False, DEVICE, CLS_W, GRAD_CLIP)
         epoch_duration = time.time() - start_time
         scheduler.step(vl[0])
         log.append(

@@ -112,13 +112,13 @@ class ADiTUnitCell(nn.Module):
 
     def __init__(
         self,
-        atom_emb_dim: int = 16,  # Kept same as DiffCSP
-        hidden_dim: int = 32,  # Kept same as DiffCSP
-        num_layers: int = 1,  # Kept same as DiffCSP
+        atom_emb_dim: int = 16, 
+        hidden_dim: int = 32,  
+        num_layers: int = 1,
         cutoff_radius: float = 5.0,
-        r_emb_dim: int = 16,  # Kept same as DiffCSP
+        r_emb_dim: int = 16,
         max_atomic_number: int = 100,
-        time_emb_dim: int = 16,  # Kept same as DiffCSP
+        time_emb_dim: int = 16,
         beta_min: float = 0.01,
         beta_max: float = 2.0,
         num_heads: int = 4,
@@ -139,7 +139,7 @@ class ADiTUnitCell(nn.Module):
             hidden_channels=hidden_dim,
             num_filters=hidden_dim,
             num_interactions=num_layers,
-            num_gaussians=5,  # Kept same as DiffCSP
+            num_gaussians=5,
             readout="add",
             cutoff=cutoff_radius,
         )

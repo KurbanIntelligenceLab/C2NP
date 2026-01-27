@@ -18,7 +18,7 @@ class FlowLLM_Task2(nn.Module):
         max_atomic_number: int = 100,
         beta_min: float = 0.01,
         beta_max: float = 2.0,
-        llm_model_name: str = "prajjwal1/bert-tiny",  # Use TinyBERT for efficiency
+        llm_model_name: str = "prajjwal1/bert-tiny",
     ):
         super().__init__()
         self.cutoff_radius = cutoff_radius

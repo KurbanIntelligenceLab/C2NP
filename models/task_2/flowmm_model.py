@@ -28,7 +28,7 @@ class FlowMMCrystal(nn.Module):
         max_atomic_number: int = 100,
         beta_min: float = 0.01,
         beta_max: float = 2.0,
-        num_spacegroups: int = 230,  # Added parameter for number of space groups
+        num_spacegroups: int = 230,
     ):
         super().__init__()
         self.cutoff_radius = cutoff_radius

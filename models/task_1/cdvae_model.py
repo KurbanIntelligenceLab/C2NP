@@ -25,12 +25,12 @@ class CDVAEUnitCell(nn.Module):
 
     def __init__(
         self,
-        atom_emb_dim: int = 16,  # Reduced from 32
-        hidden_dim: int = 32,  # Reduced from 64
-        latent_dim: int = 16,  # Reduced from 32
-        num_layers: int = 1,  # Reduced from 2
+        atom_emb_dim: int = 16,
+        hidden_dim: int = 32,
+        latent_dim: int = 16,
+        num_layers: int = 1,
         cutoff_radius: float = 5.0,
-        r_emb_dim: int = 16,  # Reduced from 32
+        r_emb_dim: int = 16,
         max_atomic_number: int = 100,
         delta_clip: float = 0.5,
     ):
@@ -47,7 +47,7 @@ class CDVAEUnitCell(nn.Module):
             hidden_channels=hidden_dim,
             num_filters=hidden_dim,
             num_interactions=num_layers,
-            num_gaussians=5,  # Reduced from 10
+            num_gaussians=5,
             readout="add",
             cutoff=cutoff_radius,
         )

@@ -14,7 +14,7 @@ sys.path.append(
 )
 from multiprocessing import Pool, cpu_count
 
-from scipy.spatial import ConvexHull, distance
+from scipy.spatial import ConvexHull, distance, QhullError
 from torch import nn, optim
 
 # Allowlist PyG globals for weights_only loading
@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 from dataloaders import C2NPDataloader
 from models.task_1.flowllm_model import FlowLLM_Task1
+from train.task_1.config import Task1TrainingConfig
 
 torch.serialization.add_safe_globals([GlobalStorage, DataEdgeAttr, DataTensorAttr])
 
@@ -48,7 +49,7 @@ def hausdorff(a: np.ndarray, b: np.ndarray) -> float:
         dist_a_to_b = distance.cdist(a, b).min(axis=1).max()
         dist_b_to_a = distance.cdist(b, a).min(axis=1).max()
         return max(dist_a_to_b, dist_b_to_a)
-    except:
+    except ValueError:
         return 0.0  # Return 0 for failed computations
 
 
@@ -57,7 +58,7 @@ def delta_hull_vol(a: np.ndarray, b: np.ndarray) -> float:
         vol_a = ConvexHull(a, qhull_options="QJ").volume
         vol_b = ConvexHull(b, qhull_options="QJ").volume
         return abs(vol_a - vol_b)
-    except:
+    except (QhullError, ValueError):
         return float("inf")
 
 
@@ -85,7 +86,7 @@ def volume_ratio(volume: float, radius: float) -> float:
     try:
         sphere_vol = 4 / 3 * math.pi * radius**3
         return volume / sphere_vol
-    except:
+    except (TypeError, ZeroDivisionError):
         return 1.0  # Return 1.0 (perfect ratio) for failed computations
 
 
@@ -105,11 +106,11 @@ def compute_metrics_batch(args):
             ConvexHull(pred, qhull_options="QJ").volume, float(radius)
         )
         return metrics
-    except:
+    except (QhullError, ValueError, TypeError):
         return None
 
 
-def run_epoch(model, loader, optimizer=None, train=False, device=None):
+def run_epoch(model, loader, optimizer=None, train=False, device=None, config=None):
     if train:
         model.train()
     else:
@@ -133,7 +134,9 @@ def run_epoch(model, loader, optimizer=None, train=False, device=None):
         if train:
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=config.grad_clip_max_norm
+            )
             optimizer.step()
 
         n = data.num_nodes
@@ -148,7 +151,13 @@ def run_epoch(model, loader, optimizer=None, train=False, device=None):
     return total_loss / total_nodes
 
 
-for SEED in [42]:
+# Load configuration
+config = Task1TrainingConfig.default()
+SEEDS = config.get_seeds_for_model("flowllm")
+BATCH_SIZE = config.get_batch_size_for_model("flowllm")
+EVAL_BATCH_SIZE = config.get_eval_batch_size_for_model("flowllm")
+
+for SEED in SEEDS:
     print(f"\n===== Seed {SEED} =====")
     # Set randomness
     random.seed(SEED)
@@ -159,14 +168,13 @@ for SEED in [42]:
     torch.backends.cudnn.benchmark = False
 
     # Output dir per seed
-    out_dir = os.path.join("results/task_1", "flowllm", str(SEED))
+    out_dir = config.get_output_dir("flowllm", SEED)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Hyperparams
-    DATA_ROOT = "C2NP"
-    BATCH_SIZE = 1
-    LR = 1e-4
-    EPOCHS = 5
+    # Hyperparams from config
+    DATA_ROOT = config.data_root
+    LR = config.learning_rate
+    EPOCHS = config.num_epochs
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset
@@ -181,19 +189,22 @@ for SEED in [42]:
             data.cell_ptr = torch.tensor([0, data.cell_pos.size(0)], dtype=torch.long)
         return data
 
-    ds = C2NPDataloader(root=DATA_ROOT, num_workers=4, transform=add_target)
+    ds = C2NPDataloader(
+        root=DATA_ROOT, num_workers=config.dataloader_num_workers, transform=add_target
+    )
 
-    # Use only 20% of each split to prevent crashes
-    SUBSET_RATIO = 1
+    # Dataset splits from config
+    SUBSET_RATIO = config.subset_ratio
+    train_ratio, val_ratio = config.train_val_split
 
     train_ds, val_ds = ds.random_train_splits(
-        0.8, 0.2, seed=SEED, subset_ratio=SUBSET_RATIO
+        train_ratio, val_ratio, seed=SEED, subset_ratio=SUBSET_RATIO
     )
     id_test_ds = ds.get_split("id_test", subset_ratio=SUBSET_RATIO)
     ood_test_ds = ds.get_split("ood_test", subset_ratio=SUBSET_RATIO)
 
     # Print dataset sizes to confirm subset is working
-    print(f"Dataset sizes (using {SUBSET_RATIO*100}% subset):")
+    print(f"Dataset sizes (using {SUBSET_RATIO * 100}% subset):")
     print(f"Train: {len(train_ds)}")
     print(f"Val: {len(val_ds)}")
     print(f"ID Test: {len(id_test_ds)}")
@@ -204,23 +215,31 @@ for SEED in [42]:
     # Training phase
     loaders = {
         "train": GeoDataLoader(
-            train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0
+            train_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            num_workers=config.train_loader_num_workers,
         ),
         "val": GeoDataLoader(
-            val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0
+            val_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.eval_loader_num_workers,
         ),
     }
 
-    # Model, optimizer
+    # Model, optimizer from config
     model = FlowLLM_Task1(
-        atom_emb_dim=4,
-        hidden_dim=4,
-        num_layers=1,
-        cutoff_radius=5.0,
-        llm_model_name="prajjwal1/bert-tiny",
+        atom_emb_dim=config.atom_emb_dim,
+        hidden_dim=config.hidden_dim,
+        num_layers=config.num_layers,
+        cutoff_radius=config.cutoff_radius,
+        llm_model_name=config.flowllm_llm_model_name,
     ).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.5, 5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, "min", config.scheduler_factor, config.scheduler_patience
+    )
 
     # Training
     best_val = float("inf")
@@ -228,8 +247,8 @@ for SEED in [42]:
     for epoch in range(1, EPOCHS + 1):
         print(f"-- Epoch {epoch}/{EPOCHS}")
         start_time = time.time()
-        tl = run_epoch(model, loaders["train"], optimizer, True, DEVICE)
-        vl = run_epoch(model, loaders["val"], None, False, DEVICE)
+        tl = run_epoch(model, loaders["train"], optimizer, True, DEVICE, config)
+        vl = run_epoch(model, loaders["val"], None, False, DEVICE, config)
         epoch_duration = time.time() - start_time
         scheduler.step(vl)
         log.append(
@@ -250,22 +269,29 @@ for SEED in [42]:
     del train_ds, val_ds, loaders
     clear_memory()
 
-    # Evaluation phase with smaller batch size
-    EVAL_BATCH_SIZE = 4
+    # Evaluation phase with batch size from config
     results = []
     for split in ["id_test", "ood_test"]:
         print(f"\nEvaluating {split}...")
         dataset = id_test_ds if split == "id_test" else ood_test_ds
         loader = GeoDataLoader(
-            dataset, batch_size=EVAL_BATCH_SIZE, shuffle=False, num_workers=0
+            dataset,
+            batch_size=EVAL_BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.eval_loader_num_workers,
         )
 
         # Compute loss
-        tl = run_epoch(model, loader, None, False, DEVICE)
+        tl = run_epoch(model, loader, None, False, DEVICE, config)
 
         # Compute metrics in parallel
         metrics = {"rmsd": [], "haus": [], "dhull": [], "rdfE": [], "vratio": []}
-        loader = GeoDataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+        loader = GeoDataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=config.eval_loader_num_workers,
+        )
 
         # Prepare batch data for parallel processing
         batch_data = []

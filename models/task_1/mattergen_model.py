@@ -146,7 +146,7 @@ class MatterGenUnitCell(nn.Module):
     ) -> torch.Tensor:
         """Sample final positions using DDPM with chunked processing"""
         device = next(self.parameters()).device
-        x = torch.randn_like(data.pos)  # Start from random noise
+        x = torch.randn_like(data.pos)
         x = torch.clamp(x, min=-5.0, max=5.0)  # Initial clipping
 
         # Get batch indices for proper broadcasting

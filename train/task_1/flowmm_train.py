@@ -12,7 +12,7 @@ from torch_geometric.loader import DataLoader as GeoDataLoader
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
-from scipy.spatial import ConvexHull, distance
+from scipy.spatial import ConvexHull, distance, QhullError
 from torch import nn, optim
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
@@ -20,6 +20,7 @@ from tqdm import tqdm
 
 from dataloaders import C2NPDataloader
 from models.task_1.flowmm_model import FlowMMUnitCell
+from train.task_1.config import Task1TrainingConfig
 
 # Allowlist PyG globals for weights_only loading
 torch.serialization.add_safe_globals([GlobalStorage, DataEdgeAttr, DataTensorAttr])
@@ -35,7 +36,7 @@ def hausdorff(a: np.ndarray, b: np.ndarray) -> float:
         return max(
             distance.directed_hausdorff(a, b)[0], distance.directed_hausdorff(b, a)[0]
         )
-    except:
+    except ValueError:
         return 0.0  # Return 0 for failed computations
 
 
@@ -45,7 +46,7 @@ def delta_hull_vol(a: np.ndarray, b: np.ndarray) -> float:
             ConvexHull(a, qhull_options="QJ").volume
             - ConvexHull(b, qhull_options="QJ").volume
         )
-    except:
+    except (QhullError, ValueError):
         return 0.0  # Return 0 for failed computations
 
 
@@ -58,7 +59,7 @@ def rdf_energy(a: np.ndarray, b: np.ndarray, r_max=10.0, bins=128) -> float:
             return hist
 
         return np.square(rdf(a) - rdf(b)).sum()
-    except:
+    except ValueError:
         return 0.0  # Return 0 for failed computations
 
 
@@ -66,11 +67,11 @@ def volume_ratio(volume: float, radius: float) -> float:
     try:
         sphere_vol = 4 / 3 * math.pi * radius**3
         return volume / sphere_vol
-    except:
+    except (TypeError, ZeroDivisionError):
         return 1.0  # Return 1.0 (perfect ratio) for failed computations
 
 
-def run_epoch(model, loader, optimizer=None, train=False, device=None):
+def run_epoch(model, loader, optimizer=None, train=False, device=None, config=None):
     if train:
         model.train()
     else:
@@ -124,7 +125,10 @@ def run_epoch(model, loader, optimizer=None, train=False, device=None):
         if train:
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if config:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=config.grad_clip_max_norm
+                )
             optimizer.step()
 
         # Restore original positions
@@ -138,7 +142,12 @@ def run_epoch(model, loader, optimizer=None, train=False, device=None):
     return total_loss / total_nodes
 
 
-for SEED in [42, 50, 60]:
+# Load configuration
+config = Task1TrainingConfig.default()
+SEEDS = config.get_seeds_for_model("flowmm")
+BATCH_SIZE = config.get_batch_size_for_model("flowmm")
+
+for SEED in SEEDS:
     print(f"\n===== Seed {SEED} =====")
     # Set randomness
     random.seed(SEED)
@@ -149,14 +158,13 @@ for SEED in [42, 50, 60]:
     torch.backends.cudnn.benchmark = False
 
     # Output dir per seed
-    out_dir = os.path.join("results/task_1", "flowmm", str(SEED))
+    out_dir = config.get_output_dir("flowmm", SEED)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Hyperparams
-    DATA_ROOT = "C2NP"
-    BATCH_SIZE = 1
-    LR = 1e-4
-    EPOCHS = 5
+    # Hyperparams from config
+    DATA_ROOT = config.data_root
+    LR = config.learning_rate
+    EPOCHS = config.num_epochs
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset
@@ -171,19 +179,22 @@ for SEED in [42, 50, 60]:
             data.cell_ptr = torch.tensor([0, data.cell_pos.size(0)], dtype=torch.long)
         return data
 
-    ds = C2NPDataloader(root=DATA_ROOT, num_workers=4, transform=add_target)
+    ds = C2NPDataloader(
+        root=DATA_ROOT, num_workers=config.dataloader_num_workers, transform=add_target
+    )
 
-    # Use only 20% of each split to prevent crashes
-    SUBSET_RATIO = 1
+    # Dataset splits from config
+    SUBSET_RATIO = config.subset_ratio
+    train_ratio, val_ratio = config.train_val_split
 
     train_ds, val_ds = ds.random_train_splits(
-        0.8, 0.2, seed=SEED, subset_ratio=SUBSET_RATIO
+        train_ratio, val_ratio, seed=SEED, subset_ratio=SUBSET_RATIO
     )
     id_test_ds = ds.get_split("id_test", subset_ratio=SUBSET_RATIO)
     ood_test_ds = ds.get_split("ood_test", subset_ratio=SUBSET_RATIO)
 
     # Print dataset sizes to confirm subset is working
-    print(f"Dataset sizes (using {SUBSET_RATIO*100}% subset):")
+    print(f"Dataset sizes (using {SUBSET_RATIO * 100}% subset):")
     print(f"Train: {len(train_ds)}")
     print(f"Val: {len(val_ds)}")
     print(f"ID Test: {len(id_test_ds)}")
@@ -192,30 +203,44 @@ for SEED in [42, 50, 60]:
         subset.transform = clean
     loaders = {
         "train": GeoDataLoader(
-            train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0
+            train_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            num_workers=config.train_loader_num_workers,
         ),
         "val": GeoDataLoader(
-            val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0
+            val_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.eval_loader_num_workers,
         ),
         "id_test": GeoDataLoader(
-            id_test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0
+            id_test_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.eval_loader_num_workers,
         ),
         "ood_test": GeoDataLoader(
-            ood_test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0
+            ood_test_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.eval_loader_num_workers,
         ),
     }
 
-    # Model, optimizer
+    # Model, optimizer from config
     model = FlowMMUnitCell(
-        atom_emb_dim=4,
-        hidden_dim=4,
-        num_layers=1,
-        cutoff_radius=5.0,
-        r_emb_dim=4,
-        time_emb_dim=4,
+        atom_emb_dim=config.atom_emb_dim,
+        hidden_dim=config.hidden_dim,
+        num_layers=config.num_layers,
+        cutoff_radius=config.cutoff_radius,
+        r_emb_dim=config.r_emb_dim,
+        time_emb_dim=config.time_emb_dim,
     ).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.5, 5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, "min", config.scheduler_factor, config.scheduler_patience
+    )
 
     # Training
     best_val = float("inf")
@@ -223,8 +248,8 @@ for SEED in [42, 50, 60]:
     for epoch in range(1, EPOCHS + 1):
         print(f"-- Epoch {epoch}/{EPOCHS}")
         start_time = time.time()
-        tl = run_epoch(model, loaders["train"], optimizer, True, DEVICE)
-        vl = run_epoch(model, loaders["val"], None, False, DEVICE)
+        tl = run_epoch(model, loaders["train"], optimizer, True, DEVICE, config)
+        vl = run_epoch(model, loaders["val"], None, False, DEVICE, config)
         epoch_duration = time.time() - start_time
         scheduler.step(vl)
         log.append(
@@ -244,7 +269,7 @@ for SEED in [42, 50, 60]:
     results = []
     for split in ["id_test", "ood_test"]:
         loader = loaders[split]
-        tl = run_epoch(model, loader, None, False, DEVICE)
+        tl = run_epoch(model, loader, None, False, DEVICE, config)
 
         # compute geometry metrics
         metrics = {"rmsd": [], "haus": [], "dhull": [], "rdfE": [], "vratio": []}
@@ -268,7 +293,7 @@ for SEED in [42, 50, 60]:
                     metrics["vratio"].append(
                         volume_ratio(hull_vol, float(data.radius[i]))
                     )
-                except:
+                except (QhullError, ValueError, TypeError):
                     metrics["vratio"].append(
                         1.0
                     )  # Use 1.0 as default for failed computations

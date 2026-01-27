@@ -16,13 +16,13 @@ class DiffCSPUnitCell(nn.Module):
 
     def __init__(
         self,
-        atom_emb_dim: int = 16,  # Reduced from 32
-        hidden_dim: int = 32,  # Reduced from 64
-        num_layers: int = 1,  # Reduced from 2
+        atom_emb_dim: int = 16,
+        hidden_dim: int = 32,
+        num_layers: int = 1,
         cutoff_radius: float = 5.0,
-        r_emb_dim: int = 16,  # Reduced from 32
+        r_emb_dim: int = 16,
         max_atomic_number: int = 100,
-        time_emb_dim: int = 16,  # Reduced from 32
+        time_emb_dim: int = 16,
         beta_min: float = 0.01,
         beta_max: float = 2.0,
     ):

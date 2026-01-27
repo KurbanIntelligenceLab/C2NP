@@ -15,6 +15,8 @@ from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 from torch_geometric.nn import radius_graph
 
+from create_c2np.config import DEFAULT_QUATERNION_CONFIG, UNIT_CELLS_SUBDIR, QUATERNIONS_SUBDIR
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,12 +29,12 @@ class C2NPDataloader(InMemoryDataset):
     """
     A PyTorch Geometric dataset for crystal structure prediction tasks.
 
-    This dataset loads crystal structures from the cifs and quaternions directories
+    This dataset loads crystal structures from the unit_cells and quaternions directories
     and provides train/ID test/OOD test splits based on R values (cutoff radii).
 
     Directory structure expected:
     - root/
-      - cifs/          # CIF files for unit cells
+      - unit_cells/    # CIF files for unit cells
       - quaternions/   # XYZ files organized by material and R values
       - all_splits.pt  # Processed data (created automatically)
       - metadata.pkl   # Dataset metadata (created automatically)
@@ -46,11 +48,8 @@ class C2NPDataloader(InMemoryDataset):
 
     SPLITS = ["train", "id_test", "ood_test"]
 
-    # R value splits from generate_quaternions.py
-    R_SPLITS = {
-        "ID": [10, 11, 17, 21, 24, 26],  # In-distribution
-        "OOD": [6, 7, 29, 30],  # Out-of-distribution
-    }
+    # R value splits from config
+    R_SPLITS = DEFAULT_QUATERNION_CONFIG["r_splits"]
 
     @property
     def raw_file_names(self):
@@ -305,18 +304,18 @@ class C2NPDataloader(InMemoryDataset):
         """Process the dataset with improved error handling and validation."""
         logger.info("Starting dataset processing...")
 
-        cifs_dir = self.root_path / "cifs"
-        quat_dir = self.root_path / "quaternions"
+        unit_cells_dir = self.root_path / UNIT_CELLS_SUBDIR
+        quat_dir = self.root_path / QUATERNIONS_SUBDIR
 
         # Validate input directories
-        if not cifs_dir.exists():
-            raise FileNotFoundError(f"CIFs directory not found: {cifs_dir}")
+        if not unit_cells_dir.exists():
+            raise FileNotFoundError(f"Unit cells directory not found: {unit_cells_dir}")
         if not quat_dir.exists():
             raise FileNotFoundError(f"Quaternions directory not found: {quat_dir}")
 
         # map material name → its CIF path
         unit_cells = {}
-        for f in cifs_dir.glob("*.cif"):
+        for f in unit_cells_dir.glob("*.cif"):
             material_name = f.stem.lower()
             unit_cells[material_name] = str(f)
 
@@ -499,9 +498,9 @@ class C2NPDataloader(InMemoryDataset):
     def print_dataset_info(self):
         """Print detailed information about the dataset."""
         info = self.get_dataset_info()
-        print("=" * 50)
+        print("=" * 10)
         print("C2NP Dataset Information")
-        print("=" * 50)
+        print("=" * 10)
         print(f"Total samples: {info['total_samples']}")
         print("\nSplit breakdown:")
         for split, count in info["splits"].items():
@@ -512,4 +511,4 @@ class C2NPDataloader(InMemoryDataset):
         print("\nProcessed files:")
         print(f"  Data: {info['processed_files']['data_file']}")
         print(f"  Metadata: {info['processed_files']['metadata_file']}")
-        print("=" * 50)
+        print("=" * 10)

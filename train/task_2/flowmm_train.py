@@ -12,7 +12,7 @@ from torch_geometric.loader import DataLoader as GeoDataLoader
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
-from scipy.spatial import ConvexHull, distance
+from scipy.spatial import ConvexHull, distance, QhullError
 from torch import nn, optim
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
@@ -20,6 +20,7 @@ from tqdm import tqdm
 
 from dataloaders import C2NPDataloader
 from models.task_2.flowmm_model import FlowMMCrystal
+from train.task_2.config import Task2TrainingConfig
 
 torch.serialization.add_safe_globals([GlobalStorage, DataEdgeAttr, DataTensorAttr])
 
@@ -70,7 +71,7 @@ def delta_hull_vol(a: np.ndarray, b: np.ndarray) -> float:
         try:
             hull_a = ConvexHull(a, qhull_options="QJ")
             hull_b = ConvexHull(b, qhull_options="QJ")
-        except:
+        except QhullError:
             hull_a = ConvexHull(a)
             hull_b = ConvexHull(b)
 
@@ -161,7 +162,7 @@ def run_epoch(model, loader, optimizer=None, train=False, device=None):
 
         # Skip batch if loss is NaN
         if torch.isnan(loss):
-            print(f"Warning: NaN loss detected, skipping batch")
+            print("Warning: NaN loss detected, skipping batch")
             continue
 
         if train:
@@ -175,8 +176,8 @@ def run_epoch(model, loader, optimizer=None, train=False, device=None):
                         print(f"Warning: NaN gradient in {name}")
                         param.grad = torch.nan_to_num(param.grad, nan=0.0)
 
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+            # Gradient clipping from config
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
 
             optimizer.step()
 
@@ -272,7 +273,13 @@ def evaluate(model, loader, device="cpu", name=""):
     return {"rmse": rmse, "sg_acc": sg_acc, "joint_acc": joint_acc}
 
 
-for SEED in [50, 60]:
+# Load configuration
+config = Task2TrainingConfig.default()
+SEEDS = config.get_seeds_for_model("flowmm")
+BATCH_SIZE = config.get_batch_size_for_model("flowmm")
+GRAD_CLIP = config.get_grad_clip_for_model("flowmm")
+
+for SEED in SEEDS:
     print(f"\n===== Seed {SEED} =====")
     # Set randomness
     random.seed(SEED)
@@ -283,14 +290,13 @@ for SEED in [50, 60]:
     torch.backends.cudnn.benchmark = False
 
     # Output dir per seed
-    out_dir = os.path.join("results/task_2", "flowmm", str(SEED))
+    out_dir = config.get_output_dir("flowmm", SEED)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Hyperparams
-    DATA_ROOT = "C2NP"
-    BATCH_SIZE = 1
-    LR = 1e-5
-    EPOCHS = 5
+    # Hyperparams from config
+    DATA_ROOT = config.data_root
+    LR = config.learning_rate  # Note: flowmm uses 1e-5 in original, but using config default
+    EPOCHS = config.num_epochs
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset
@@ -300,17 +306,18 @@ for SEED in [50, 60]:
 
     ds = C2NPDataloader(root=DATA_ROOT, num_workers=4, transform=add_target)
 
-    # Use only 20% of each split to prevent crashes
-    SUBSET_RATIO = 1
+    # Dataset splits from config
+    SUBSET_RATIO = config.subset_ratio
+    train_ratio, val_ratio = config.train_val_split
 
     train_ds, val_ds = ds.random_train_splits(
-        0.8, 0.2, seed=SEED, subset_ratio=SUBSET_RATIO
+        train_ratio, val_ratio, seed=SEED, subset_ratio=SUBSET_RATIO
     )
     id_test_ds = ds.get_split("id_test", subset_ratio=SUBSET_RATIO)
     ood_test_ds = ds.get_split("ood_test", subset_ratio=SUBSET_RATIO)
 
     # Print dataset sizes to confirm subset is working
-    print(f"Dataset sizes (using {SUBSET_RATIO*100}% subset):")
+    print(f"Dataset sizes (using {SUBSET_RATIO * 100}% subset):")
     print(f"Train: {len(train_ds)}")
     print(f"Val: {len(val_ds)}")
     print(f"ID Test: {len(id_test_ds)}")
@@ -332,18 +339,22 @@ for SEED in [50, 60]:
         ),
     }
 
-    # Model, optimizer
+    # Model, optimizer from config
     model = FlowMMCrystal(
-        atom_emb_dim=4,
-        hidden_dim=4,
-        num_layers=1,
-        cutoff_radius=5.0,
-        cell_emb_dim=4,
-        time_emb_dim=4,
+        atom_emb_dim=config.flowmm_atom_emb_dim,
+        hidden_dim=config.hidden_dim,
+        num_layers=config.num_layers,
+        cutoff_radius=config.cutoff_radius,
+        cell_emb_dim=config.flowmm_r_emb_dim,
+        time_emb_dim=config.flowmm_time_emb_dim,
     ).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, "min", 0.5, 5, min_lr=1e-7
+        optimizer,
+        mode=config.scheduler_mode,
+        factor=config.scheduler_factor,
+        patience=config.scheduler_patience,
+        min_lr=1e-7,
     )
 
     # Training

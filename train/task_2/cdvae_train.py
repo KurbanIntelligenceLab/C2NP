@@ -19,6 +19,7 @@ from torch_geometric.data.storage import GlobalStorage
 
 from dataloaders import C2NPDataloader
 from models.task_2.cdvae_model import CDVAE_Task2
+from train.task_2.config import Task2TrainingConfig
 
 # Allowlist PyG globals
 torch.serialization.add_safe_globals([GlobalStorage, DataEdgeAttr, DataTensorAttr])
@@ -70,7 +71,7 @@ def run_epoch(model, loader, optimizer=None, train=False, device="cpu"):
             if train:
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+                nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
                 optimizer.step()
         tot += loss.item() * B
         reg_tot += loss_r.item() * B
@@ -94,17 +95,13 @@ def run_epoch(model, loader, optimizer=None, train=False, device="cpu"):
     )
 
 
-# Hyperparams
-DATA_ROOT = "C2NP"
-BATCH_SIZE = 1
-LR = 1e-4
-NUM_EPOCHS = 5
-KL_W = 1e-4
-CLS_W = 0.5
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Load configuration
+config = Task2TrainingConfig.default()
+SEEDS = config.get_seeds_for_model("cdvae")
+BATCH_SIZE = config.get_batch_size_for_model("cdvae")
+GRAD_CLIP = config.get_grad_clip_for_model("cdvae")
 
-
-for SEED in [50, 60]:
+for SEED in SEEDS:
     random.seed(SEED)
     torch.manual_seed(SEED)
     torch.cuda.manual_seed_all(SEED)
@@ -113,8 +110,16 @@ for SEED in [50, 60]:
     torch.backends.cudnn.benchmark = False
 
     # Output directory
-    out_dir = os.path.join("results", "task_2", "cdvae", str(SEED))
+    out_dir = config.get_output_dir("cdvae", SEED)
     os.makedirs(out_dir, exist_ok=True)
+
+    # Hyperparams from config
+    DATA_ROOT = config.data_root
+    LR = config.learning_rate
+    NUM_EPOCHS = config.num_epochs
+    KL_W = config.kl_weight
+    CLS_W = config.cls_weight
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset with strip_global transform
     ds = C2NPDataloader(root=DATA_ROOT, transform=strip_global)
@@ -122,18 +127,19 @@ for SEED in [50, 60]:
     otrain_full = ds.get_split("train")
     NUM_SG = int(otrain_full.data.spacegroup.max()) + 1
 
-    # Use only 20% of each split to prevent crashes
-    SUBSET_RATIO = 1
+    # Dataset splits from config
+    SUBSET_RATIO = config.subset_ratio
+    train_ratio, val_ratio = config.train_val_split
 
     # Random in-dist splits and OOD
     train_ds, val_ds = ds.random_train_splits(
-        0.8, 0.2, seed=SEED, subset_ratio=SUBSET_RATIO
+        train_ratio, val_ratio, seed=SEED, subset_ratio=SUBSET_RATIO
     )
     id_test_ds = ds.get_split("id_test", subset_ratio=SUBSET_RATIO)
     ood_ds = ds.get_split("ood_test", subset_ratio=SUBSET_RATIO)
 
     # Print dataset sizes to confirm subset is working
-    print(f"Dataset sizes (using {SUBSET_RATIO*100}% subset):")
+    print(f"Dataset sizes (using {SUBSET_RATIO * 100}% subset):")
     print(f"Train: {len(train_ds)}")
     print(f"Val: {len(val_ds)}")
     print(f"ID Test: {len(id_test_ds)}")
@@ -149,13 +155,20 @@ for SEED in [50, 60]:
     id_loader = DataLoader(id_test_ds, batch_size=BATCH_SIZE, shuffle=False)
     ood_loader = DataLoader(ood_ds, batch_size=BATCH_SIZE, shuffle=False)
 
-    # Model, optimizer, scheduler
+    # Model, optimizer, scheduler from config
     model = CDVAE_Task2(
-        hidden_dim=4, latent_dim=4, num_layers=1, cutoff=5.0, num_spacegroups=NUM_SG
+        hidden_dim=config.hidden_dim,
+        latent_dim=config.cdvae_latent_dim,
+        num_layers=config.num_layers,
+        cutoff=config.cutoff_radius,
+        num_spacegroups=NUM_SG,
     ).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5
+        optimizer,
+        mode=config.scheduler_mode,
+        factor=config.scheduler_factor,
+        patience=config.scheduler_patience,
     )
 
     # Training loop

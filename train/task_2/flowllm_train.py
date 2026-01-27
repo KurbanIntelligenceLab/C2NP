@@ -17,6 +17,7 @@ import time
 
 from dataloaders import C2NPDataloader
 from models.task_2.flowllm_model import FlowLLM_Task2
+from train.task_2.config import Task2TrainingConfig
 
 
 # Metric helpers
@@ -26,11 +27,11 @@ def rmsd(a: np.ndarray, b: np.ndarray) -> float:
 
 def surface_indices(coords, tol=0.01):
     try:
-        from scipy.spatial import ConvexHull
+        from scipy.spatial import ConvexHull, QhullError
 
         hull = ConvexHull(coords, qhull_options="QJ Pp")
         return np.unique(hull.simplices.flatten())
-    except:
+    except (QhullError, ValueError):
         return np.arange(len(coords))  # Return all indices as fallback
 
 
@@ -60,16 +61,16 @@ def rdf_kl(pred: np.ndarray, true: np.ndarray, **kw) -> float:
 
 def vr(pred: np.ndarray, true: np.ndarray) -> float:
     try:
-        from scipy.spatial import ConvexHull
+        from scipy.spatial import ConvexHull, QhullError
 
         return ConvexHull(pred, qhull_options="QJ Pp").volume / (
             ConvexHull(true, qhull_options="QJ Pp").volume + 1e-12
         )
-    except:
+    except (QhullError, ValueError):
         return 1.0  # Return 1.0 (perfect ratio) for failed computations
 
 
-def run_epoch(model, loader, optimizer=None, train=False, device="cpu"):
+def run_epoch(model, loader, optimizer=None, train=False, device="cpu", grad_clip=1.0):
     model.train() if train else model.eval()
     total_loss = total_nodes = 0
     pbar = tqdm(loader, desc=("Train" if train else "Eval "))
@@ -90,7 +91,7 @@ def run_epoch(model, loader, optimizer=None, train=False, device="cpu"):
         if train:
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
             optimizer.step()
 
         total_loss += loss.item() * data.num_nodes
@@ -175,15 +176,14 @@ def evaluate(model, loader, device="cpu", name=""):
     return {"rmse": rmse, "sg_acc": sg_acc, "joint_acc": joint_acc}
 
 
-# Fixed hyperparams
-DATA_ROOT = "C2NP"
-BATCH_SIZE = 1
-LR = 1e-4
-NUM_EPOCHS = 5
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Load configuration
+config = Task2TrainingConfig.default()
+SEEDS = config.get_seeds_for_model("flowllm")
+BATCH_SIZE = config.get_batch_size_for_model("flowllm")
+GRAD_CLIP = config.get_grad_clip_for_model("flowllm")
 
 # Multi-seed loop
-for SEED in [42, 50, 60]:
+for SEED in SEEDS:
     print(f"\n=== Seed {SEED} ===")
     # Set seeds
     random.seed(SEED)
@@ -194,23 +194,30 @@ for SEED in [42, 50, 60]:
     torch.backends.cudnn.benchmark = False
 
     # Output dir per seed
-    out_dir = os.path.join("results", "task_2", "flowllm", str(SEED))
+    out_dir = config.get_output_dir("flowllm", SEED)
     os.makedirs(out_dir, exist_ok=True)
+
+    # Hyperparams from config
+    DATA_ROOT = config.data_root
+    LR = config.learning_rate
+    NUM_EPOCHS = config.num_epochs
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset
     ds = C2NPDataloader(root=DATA_ROOT)
 
-    # Use only 20% of each split to prevent crashes
-    SUBSET_RATIO = 1
+    # Dataset splits from config
+    SUBSET_RATIO = config.subset_ratio
+    train_ratio, val_ratio = config.train_val_split
 
     train_ds, val_ds = ds.random_train_splits(
-        0.8, 0.2, seed=SEED, subset_ratio=SUBSET_RATIO
+        train_ratio, val_ratio, seed=SEED, subset_ratio=SUBSET_RATIO
     )
     id_ds = ds.get_split("id_test", subset_ratio=SUBSET_RATIO)
     ood_ds = ds.get_split("ood_test", subset_ratio=SUBSET_RATIO)
 
     # Print dataset sizes to confirm subset is working
-    print(f"Dataset sizes (using {SUBSET_RATIO*100}% subset):")
+    print(f"Dataset sizes (using {SUBSET_RATIO * 100}% subset):")
     print(f"Train: {len(train_ds)}")
     print(f"Val: {len(val_ds)}")
     print(f"ID Test: {len(id_ds)}")
@@ -224,18 +231,21 @@ for SEED in [42, 50, 60]:
     id_loader = DataLoader(id_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
     ood_loader = DataLoader(ood_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
-    # Model, optimizer, scheduler
+    # Model, optimizer, scheduler from config
     model = FlowLLM_Task2(
-        atom_emb_dim=4,
-        hidden_dim=4,
-        num_layers=1,
-        cutoff_radius=5.0,
-        llm_model_name="prajjwal1/bert-tiny",  # Use TinyBERT for efficiency
+        atom_emb_dim=config.flowllm_atom_emb_dim,
+        hidden_dim=config.hidden_dim,
+        num_layers=config.num_layers,
+        cutoff_radius=config.cutoff_radius,
+        llm_model_name=config.flowllm_llm_model_name,
     ).to(DEVICE)
 
     optimizer = optim.Adam(model.parameters(), lr=LR)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5
+        optimizer,
+        mode=config.scheduler_mode,
+        factor=config.scheduler_factor,
+        patience=config.scheduler_patience,
     )
 
     # Training loop
@@ -244,8 +254,8 @@ for SEED in [42, 50, 60]:
     for epoch in range(1, NUM_EPOCHS + 1):
         print(f"-- Epoch {epoch}/{NUM_EPOCHS}")
         start_time = time.time()
-        tl = run_epoch(model, train_loader, optimizer, True, DEVICE)
-        vl = run_epoch(model, val_loader, None, False, DEVICE)
+        tl = run_epoch(model, train_loader, optimizer, True, DEVICE, GRAD_CLIP)
+        vl = run_epoch(model, val_loader, None, False, DEVICE, GRAD_CLIP)
         epoch_duration = time.time() - start_time
         scheduler.step(vl)
         log.append(
