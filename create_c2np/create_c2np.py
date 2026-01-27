@@ -40,11 +40,11 @@ def extract_cifs(raw_data_dir: Path, output_dir: Path) -> int:
     """Extract all CIF files from raw_data to output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
     count = 0
-    
+
     # Check if there's a cifs/ subdirectory
     cifs_subdir = raw_data_dir / "cifs"
     search_dir = cifs_subdir if cifs_subdir.exists() else raw_data_dir
-    
+
     for root, _, files in os.walk(search_dir):
         for f in files:
             if f.lower().endswith(".cif"):
@@ -57,16 +57,16 @@ def extract_xyz_files(raw_data_dir: Path, output_dir: Path) -> int:
     """Extract XYZ files from raw_data directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
     count = 0
-    
+
     # Check if there's a materials/ subdirectory
     materials_subdir = raw_data_dir / "materials"
     search_dir = materials_subdir if materials_subdir.exists() else raw_data_dir
-    
+
     # Debug: print what we're searching
     if not search_dir.exists():
         print(f"  [DEBUG] Search directory does not exist: {search_dir}")
         return 0
-    
+
     # Use os.walk to recursively find all XYZ files
     xyz_files_found = []
     for root, dirs, files in os.walk(search_dir):
@@ -74,7 +74,7 @@ def extract_xyz_files(raw_data_dir: Path, output_dir: Path) -> int:
             if file.lower().endswith(".xyz"):
                 xyz_path = Path(root) / file
                 xyz_files_found.append(xyz_path)
-    
+
     # Copy all found XYZ files
     for xyz_path in xyz_files_found:
         # Use the original filename, but ensure uniqueness if needed
@@ -87,26 +87,28 @@ def extract_xyz_files(raw_data_dir: Path, output_dir: Path) -> int:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(xyz_path, dest_path)
         count += 1
-    
+
     if count == 0:
         print(f"  [DEBUG] No XYZ files found. Searched in: {search_dir}")
-        print(f"  [DEBUG] Directory contents: {list(search_dir.iterdir())[:10] if search_dir.exists() else 'N/A'}")
-    
+        print(
+            f"  [DEBUG] Directory contents: {list(search_dir.iterdir())[:10] if search_dir.exists() else 'N/A'}"
+        )
+
     return count
 
 
 def extract_zip_if_needed(raw_data_path: Path) -> tuple[Path, bool]:
     """
     Extract zip file if needed, return path to data directory and cleanup flag.
-    
+
     Returns:
         Tuple of (data_path, needs_cleanup)
     """
-    if raw_data_path.suffix.lower() in ['.zip', '.zipx']:
+    if raw_data_path.suffix.lower() in [".zip", ".zipx"]:
         print(f"  Detected zip file: {raw_data_path.name}")
         print("  Extracting to temporary directory...")
         temp_extract = tempfile.mkdtemp(prefix="c2np_raw_")
-        with zipfile.ZipFile(raw_data_path, 'r') as zip_ref:
+        with zipfile.ZipFile(raw_data_path, "r") as zip_ref:
             zip_ref.extractall(temp_extract)
         return Path(temp_extract), True
     return raw_data_path, False
@@ -145,7 +147,7 @@ def create_c2np(raw_data_dir: str = "c2np_raw", output_dir: str = "c2np"):
 
     # Extract zip if needed
     data_path, needs_cleanup = extract_zip_if_needed(raw_path)
-    
+
     try:
         # Clear output directory if it exists
         if output_path.exists():
@@ -163,7 +165,7 @@ def create_c2np(raw_data_dir: str = "c2np_raw", output_dir: str = "c2np"):
         print("\n" + "-" * 60)
         print("Step 2: Extracting XYZ files")
         print("-" * 60)
-        
+
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_materials = Path(temp_dir) / "materials"
             xyz_count = extract_xyz_files(data_path, temp_materials)
@@ -173,7 +175,7 @@ def create_c2np(raw_data_dir: str = "c2np_raw", output_dir: str = "c2np"):
             print("\n" + "-" * 60)
             print("Step 3: Generating quaternion rotations")
             print("-" * 60)
-            
+
             if xyz_count == 0:
                 print("  [WARN] No XYZ files found, skipping quaternion generation")
             else:
@@ -185,7 +187,11 @@ def create_c2np(raw_data_dir: str = "c2np_raw", output_dir: str = "c2np"):
                 generator.generate()
 
         # Count generated materials
-        mat_count = len([d for d in quaternions_dir.iterdir() if d.is_dir()]) if quaternions_dir.exists() else 0
+        mat_count = (
+            len([d for d in quaternions_dir.iterdir() if d.is_dir()])
+            if quaternions_dir.exists()
+            else 0
+        )
 
         print("\n" + "=" * 60)
         print("c2np dataset created successfully!")

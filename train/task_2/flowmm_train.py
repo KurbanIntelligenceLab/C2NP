@@ -295,7 +295,9 @@ for SEED in SEEDS:
 
     # Hyperparams from config
     DATA_ROOT = config.data_root
-    LR = config.learning_rate  # Note: flowmm uses 1e-5 in original, but using config default
+    LR = (
+        config.learning_rate
+    )  # Note: flowmm uses 1e-5 in original, but using config default
     EPOCHS = config.num_epochs
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

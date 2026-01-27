@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATA CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -18,6 +19,7 @@ from typing import List
 def get_data_root() -> str:
     """Get DATA_ROOT resolved relative to current working directory."""
     return str(Path.cwd() / "C2NP")
+
 
 DATA_ROOT = "C2NP"  # Default relative path (will be resolved dynamically)
 SUBSET_RATIO = 1.0  # Fraction of dataset to use (1.0 = 100%)
@@ -107,6 +109,7 @@ MODEL_EVAL_BATCH_SIZES = {
     "flowmm": 1,
     "mattergen": 1,
 }
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAINING CONFIGURATION CLASS

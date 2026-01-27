@@ -26,32 +26,29 @@ DEFAULT_QUATERNION_CONFIG = {
     # R values and splits
     "r_values": list(range(6, 31)),  # R6 to R30
     "r_splits": {
-        "ID": [10, 11, 17, 21, 24, 26],    # In-distribution (validation/test)
-        "OOD": [6, 7, 29, 30],              # Out-of-distribution (test)
+        "ID": [10, 11, 17, 21, 24, 26],  # In-distribution (validation/test)
+        "OOD": [6, 7, 29, 30],  # Out-of-distribution (test)
     },
     # Train = all R values not in ID or OOD
-    
     # Rotational sampling density (minimum geodesic separation in degrees)
     "theta_train": 15.0,  # Training set rotation spacing
-    "theta_id": 12.0,     # ID set rotation spacing (finer)
-    "theta_ood": 9.0,     # OOD set rotation spacing (finest)
-    
+    "theta_id": 12.0,  # ID set rotation spacing (finer)
+    "theta_ood": 9.0,  # OOD set rotation spacing (finest)
     # Fixed rotation offsets for visual separation (Euler angles in degrees)
-    "id_offset_euler": [6, 8, 12],      # xyz Euler angles for ID offset
-    "ood_offset_euler": [15, 25, 35],   # xyz Euler angles for OOD offset
-    
+    "id_offset_euler": [6, 8, 12],  # xyz Euler angles for ID offset
+    "ood_offset_euler": [15, 25, 35],  # xyz Euler angles for OOD offset
     # Enforced angular margins (geodesic angle on SO(3)) from Train set
     "margins": {
-        "ID": 6.0,      # degrees
-        "OOD": 4.5,     # degrees
+        "ID": 6.0,  # degrees
+        "OOD": 4.5,  # degrees
         "train": 0.0,
     },
-    
     # Processing parameters
-    "train_seed": 1337,           # Deterministic seed for train grid
-    "max_workers": 4,             # Number of parallel workers for quaternion generation
-    "coord_tolerance": 1e-6,      # Tolerance for coordinate deduplication
+    "train_seed": 1337,  # Deterministic seed for train grid
+    "max_workers": 4,  # Number of parallel workers for quaternion generation
+    "coord_tolerance": 1e-6,  # Tolerance for coordinate deduplication
 }
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUATERNION CONFIGURATION CLASS
@@ -60,14 +57,24 @@ DEFAULT_QUATERNION_CONFIG = {
 class QuaternionConfig:
     """Configuration for quaternion generation."""
 
-    r_values: list = field(default_factory=lambda: list(DEFAULT_QUATERNION_CONFIG["r_values"]))
-    r_splits: dict = field(default_factory=lambda: dict(DEFAULT_QUATERNION_CONFIG["r_splits"]))
+    r_values: list = field(
+        default_factory=lambda: list(DEFAULT_QUATERNION_CONFIG["r_values"])
+    )
+    r_splits: dict = field(
+        default_factory=lambda: dict(DEFAULT_QUATERNION_CONFIG["r_splits"])
+    )
     theta_train: float = DEFAULT_QUATERNION_CONFIG["theta_train"]
     theta_id: float = DEFAULT_QUATERNION_CONFIG["theta_id"]
     theta_ood: float = DEFAULT_QUATERNION_CONFIG["theta_ood"]
-    id_offset_euler: list = field(default_factory=lambda: list(DEFAULT_QUATERNION_CONFIG["id_offset_euler"]))
-    ood_offset_euler: list = field(default_factory=lambda: list(DEFAULT_QUATERNION_CONFIG["ood_offset_euler"]))
-    margins: dict = field(default_factory=lambda: dict(DEFAULT_QUATERNION_CONFIG["margins"]))
+    id_offset_euler: list = field(
+        default_factory=lambda: list(DEFAULT_QUATERNION_CONFIG["id_offset_euler"])
+    )
+    ood_offset_euler: list = field(
+        default_factory=lambda: list(DEFAULT_QUATERNION_CONFIG["ood_offset_euler"])
+    )
+    margins: dict = field(
+        default_factory=lambda: dict(DEFAULT_QUATERNION_CONFIG["margins"])
+    )
     train_seed: int = DEFAULT_QUATERNION_CONFIG["train_seed"]
     max_workers: int = DEFAULT_QUATERNION_CONFIG["max_workers"]
     coord_tolerance: float = DEFAULT_QUATERNION_CONFIG["coord_tolerance"]

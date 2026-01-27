@@ -206,7 +206,9 @@ class QuaternionGenerator:
 
     @staticmethod
     def unique_rotations(
-        coords: np.ndarray, quats: np.ndarray, tol: float = DEFAULT_QUATERNION_CONFIG["coord_tolerance"]
+        coords: np.ndarray,
+        quats: np.ndarray,
+        tol: float = DEFAULT_QUATERNION_CONFIG["coord_tolerance"],
     ) -> np.ndarray:
         """
         Deduplicate rotations that produce identical coordinates.
@@ -255,7 +257,9 @@ class QuaternionGenerator:
                 f.write(f"Original structure at R{r_val}\n")
             else:
                 x, y, z = rotation_angles
-                f.write(f"Rotated structure: x={x:.1f}°, y={y:.1f}°, z={z:.1f}° at R{r_val}\n")
+                f.write(
+                    f"Rotated structure: x={x:.1f}°, y={y:.1f}°, z={z:.1f}° at R{r_val}\n"
+                )
             for el, (X, Y, Z) in zip(elements, coords):
                 f.write(f"{el:2s} {X:15.8f} {Y:15.8f} {Z:15.8f}\n")
 
@@ -317,9 +321,11 @@ class QuaternionGenerator:
                 executor.submit(_process_xyz_file_worker, xyz_file): xyz_file
                 for xyz_file in xyz_files
             }
-            
+
             # Process with progress bar
-            with tqdm(total=len(xyz_files), desc="Generating rotations", unit="file") as pbar:
+            with tqdm(
+                total=len(xyz_files), desc="Generating rotations", unit="file"
+            ) as pbar:
                 for future in as_completed(futures):
                     result = future.result()
                     for k in self.counts:
@@ -368,17 +374,17 @@ def _process_xyz_file_worker(xyz_path: Path) -> dict:
     # Load atoms - handle encoding issues gracefully
     try:
         # Try UTF-8 first
-        with xyz_path.open(encoding='utf-8') as f:
+        with xyz_path.open(encoding="utf-8") as f:
             lines = [ln.strip() for ln in f if ln.strip()]
     except UnicodeDecodeError:
         # Fall back to latin-1 which can decode any byte
-        with xyz_path.open(encoding='latin-1', errors='replace') as f:
+        with xyz_path.open(encoding="latin-1", errors="replace") as f:
             lines = [ln.strip() for ln in f if ln.strip()]
-    
+
     if not lines:
         print(f"[WARN] Empty or invalid XYZ file: {xyz_path.name}")
         return counts
-    
+
     num_atoms = int(lines[0])
     atom_lines = lines[2 : 2 + num_atoms]
     elements, coords = zip(
@@ -437,7 +443,12 @@ def _process_xyz_file_worker(xyz_path: Path) -> dict:
         rot_coords = R.from_quat(q).apply(coords)
         angles = R.from_quat(q).as_euler("xyz", degrees=True)
         QuaternionGenerator.save_xyz_file(
-            rot_coords, elements, num_atoms, r, out_dir / f"rot_{idx}.xyz", tuple(angles)
+            rot_coords,
+            elements,
+            num_atoms,
+            r,
+            out_dir / f"rot_{idx}.xyz",
+            tuple(angles),
         )
         counts[split] += 1
 

@@ -48,7 +48,9 @@ def strip_global(data):
 
 
 # Single-epoch runner
-def run_epoch(model, loader, optimizer=None, train=False, device="cpu", cls_w=0.5, grad_clip=1.0):
+def run_epoch(
+    model, loader, optimizer=None, train=False, device="cpu", cls_w=0.5, grad_clip=1.0
+):
     if train:
         model.train()
     else:

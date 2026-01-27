@@ -15,7 +15,11 @@ from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 from torch_geometric.nn import radius_graph
 
-from create_c2np.config import DEFAULT_QUATERNION_CONFIG, UNIT_CELLS_SUBDIR, QUATERNIONS_SUBDIR
+from create_c2np.config import (
+    DEFAULT_QUATERNION_CONFIG,
+    UNIT_CELLS_SUBDIR,
+    QUATERNIONS_SUBDIR,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

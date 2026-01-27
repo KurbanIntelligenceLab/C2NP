@@ -112,8 +112,8 @@ class ADiTUnitCell(nn.Module):
 
     def __init__(
         self,
-        atom_emb_dim: int = 16, 
-        hidden_dim: int = 32,  
+        atom_emb_dim: int = 16,
+        hidden_dim: int = 32,
         num_layers: int = 1,
         cutoff_radius: float = 5.0,
         r_emb_dim: int = 16,
